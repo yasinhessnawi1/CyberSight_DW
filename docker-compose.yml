@@ -1,0 +1,220 @@
+services:
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports:
+      - "2181:2181"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_HEAP_OPTS: "-Xms256M -Xmx768M"
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 60s
+
+  ksqldb-server:
+    # Align with cp-kafka:7.6.0; supports arm64 (avoid amd64 emulation OOM on Apple Silicon).
+    image: confluentinc/cp-ksqldb-server:7.6.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8088:8088"
+    environment:
+      KSQL_HEAP_OPTS: "-Xms256M -Xmx768M"
+      KSQL_BOOTSTRAP_SERVERS: kafka:9092
+      KSQL_LISTENERS: http://0.0.0.0:8088
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8088/info || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+
+  postgres:
+    image: postgres:15
+    ports:
+      - "5433:5432"
+    shm_size: '256mb'
+    environment:
+      POSTGRES_DB: cybersight
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c work_mem=16MB
+      -c max_connections=30
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/01_init.sql
+      - ./sql/seed_data.sql:/docker-entrypoint-initdb.d/02_seed.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongodb:
+    image: mongo:6.0
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: cybersight
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  neo4j:
+    image: neo4j:5.12
+    ports:
+      - "7475:7474"
+      - "7688:7687"
+    environment:
+      NEO4J_AUTH: neo4j/password
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:7474/ || exit 1"]
+      interval: 20s
+      timeout: 15s
+      retries: 10
+      start_period: 45s
+
+  producer:
+    build:
+      context: ./etl
+      dockerfile: Dockerfile.producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      DATA_DIR: /data/cicids2017/
+      LOG_DIR: /logs
+    volumes:
+      - etl_data:/data
+      - logs_data:/logs
+
+  consumer:
+    build:
+      context: ./etl
+      dockerfile: Dockerfile.consumer
+    restart: on-failure
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      PG_HOST: postgres
+      PG_DB: cybersight
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      MONGO_URI: mongodb://mongodb:27017
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: password
+      BATCH_SIZE: "1000"
+      LOG_DIR: /logs
+    volumes:
+      - ./sql:/app/sql
+      - logs_data:/logs
+
+  ksqldb-init:
+    build:
+      context: ./etl
+      dockerfile: Dockerfile.consumer
+    depends_on:
+      ksqldb-server:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    command: ["python", "ksql_init.py"]
+    environment:
+      KSQLDB_URL: http://ksqldb-server:8088
+      KSQL_SQL_PATH: /app/sql/ksql_init.sql
+    volumes:
+      - ./sql:/app/sql
+    restart: "no"
+
+  dashboard:
+    build: ./dashboard
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    environment:
+      PG_HOST: postgres
+      PG_DB: cybersight
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      MONGO_URI: mongodb://mongodb:27017
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: password
+      KSQLDB_URL: http://ksqldb-server:8088
+      API_URL: http://api:8000
+      LOG_DIR: /logs
+    volumes:
+      - logs_data:/logs
+
+  api:
+    build: ./api
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      LOG_DIR: /logs
+    volumes:
+      - logs_data:/logs
+
+volumes:
+  postgres_data:
+  mongo_data:
+  neo4j_data:
+  logs_data:
+  etl_data:
+    external: true
+    name: cybersightdw_etl_data

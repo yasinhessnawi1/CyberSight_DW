@@ -1,0 +1,40 @@
+# Data files (large CSVs)
+data/cicids2017/*.csv
+data/cicids2017/*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Docker volumes
+postgres_data/
+mongo_data/
+neo4j_data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Qodo
+.qodo/
