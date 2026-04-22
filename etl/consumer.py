@@ -430,7 +430,7 @@ def main():
                     continue
                 continue
 
-            for tp, messages in records.items():
+            for _, messages in records.items():
                 for message in messages:
                     event = message.value
 

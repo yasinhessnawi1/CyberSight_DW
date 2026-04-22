@@ -203,24 +203,28 @@ QUERY_CATALOG = {
 
 
 def run_query_on_backend(query_name: str, backend: str):
-    """Execute a named query on the specified backend, return (df, elapsed_ms)."""
+    """Execute a named query on the specified backend, return (df, elapsed_ms).
+
+    PostgreSQL uses fact-table queries (star-schema JOINs, no summary tables)
+    so the Backend Comparison is a fair cross-engine benchmark.
+    """
     pg = get_pg()
     mongo = get_mongo()
     neo = get_neo4j()
 
     dispatch = {
-        'Q1':  {'pg': pg.q1_attack_counts,     'mongo': mongo.q1_attack_counts,     'neo4j': neo.q1_attack_counts},
-        'Q2':  {'pg': pg.q2_hourly_trend,       'mongo': mongo.q2_hourly_trend,       'neo4j': neo.q2_hourly_trend},
-        'Q3':  {'pg': pg.q3_top_sources,        'mongo': mongo.q3_top_sources,        'neo4j': neo.q3_top_sources},
-        'Q4':  {'pg': pg.q4_attack_distribution,'mongo': mongo.q4_attack_distribution,'neo4j': neo.q4_attack_distribution},
-        'Q5':  {'pg': pg.q5_protocol_breakdown, 'mongo': mongo.q5_protocol_breakdown, 'neo4j': neo.q5_protocol_breakdown},
-        'Q6':  {'pg': pg.q6_targeted_ports,     'mongo': mongo.q6_targeted_ports,     'neo4j': neo.q6_targeted_ports},
-        'Q7':  {'pg': pg.q7_avg_duration,       'mongo': mongo.q7_avg_duration,       'neo4j': neo.q7_avg_duration},
+        'Q1':  {'pg': pg.q1_attack_counts_fact,      'mongo': mongo.q1_attack_counts_raw,     'neo4j': neo.q1_attack_counts},
+        'Q2':  {'pg': pg.q2_hourly_trend_fact,        'mongo': mongo.q2_hourly_trend_raw,       'neo4j': neo.q2_hourly_trend},
+        'Q3':  {'pg': pg.q3_top_sources_fact,         'mongo': mongo.q3_top_sources,        'neo4j': neo.q3_top_sources},
+        'Q4':  {'pg': pg.q4_attack_distribution_fact, 'mongo': mongo.q4_attack_distribution_raw,'neo4j': neo.q4_attack_distribution},
+        'Q5':  {'pg': pg.q5_protocol_breakdown_fact,  'mongo': mongo.q5_protocol_breakdown, 'neo4j': neo.q5_protocol_breakdown},
+        'Q6':  {'pg': pg.q6_targeted_ports_fact,      'mongo': mongo.q6_targeted_ports,     'neo4j': neo.q6_targeted_ports},
+        'Q7':  {'pg': pg.q7_avg_duration_fact,        'mongo': mongo.q7_avg_duration,       'neo4j': neo.q7_avg_duration},
         'Q8':  {'neo4j': neo.q8_co_attackers},
-        'Q9':  {'pg': pg.get_country_summary,   'mongo': mongo.q9_country_summary,    'neo4j': neo.q9_country_summary},
-        'Q10': {'pg': pg.q10_severity_over_time,'mongo': mongo.q10_severity_over_time,'neo4j': neo.q10_severity_over_time},
-        'Q11': {'pg': pg.q11_weekend_weekday,   'mongo': mongo.q11_weekend_weekday,   'neo4j': neo.q11_weekend_weekday},
-        'Q12': {'pg': pg.q12_botnet_timeline,   'mongo': mongo.q12_botnet_timeline,   'neo4j': neo.q12_botnet_timeline},
+        'Q9':  {'pg': pg.q9_country_summary_fact,     'mongo': mongo.q9_country_summary,    'neo4j': neo.q9_country_summary},
+        'Q10': {'pg': pg.q10_severity_over_time_fact, 'mongo': mongo.q10_severity_over_time,'neo4j': neo.q10_severity_over_time},
+        'Q11': {'pg': pg.q11_weekend_weekday_fact,    'mongo': mongo.q11_weekend_weekday,   'neo4j': neo.q11_weekend_weekday},
+        'Q12': {'pg': pg.q12_botnet_timeline_fact,    'mongo': mongo.q12_botnet_timeline_raw,   'neo4j': neo.q12_botnet_timeline},
     }
 
     qkey = query_name.split(':')[0]

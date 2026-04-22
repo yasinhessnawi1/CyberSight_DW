@@ -183,30 +183,19 @@ class MongoDBConnector:
     # -----------------------------------------------------------------
     def q9_country_summary(self) -> pd.DataFrame:
         pipeline = [
+            {'$match': {'attack.is_attack': True}},
             {'$group': {
                 '_id': '$source.country',
-                'total_events': {'$sum': 1},
-                'attack_events': {
-                    '$sum': {'$cond': ['$attack.is_attack', 1, 0]}
-                },
+                'attack_events': {'$sum': 1},
                 'unique_ips': {'$addToSet': '$source.ip'},
             }},
             {'$addFields': {
                 'unique_ips': {'$size': '$unique_ips'},
-                'attack_rate_pct': {
-                    '$round': [
-                        {'$multiply': [
-                            {'$divide': ['$attack_events', {'$max': ['$total_events', 1]}]},
-                            100
-                        ]}, 2
-                    ]
-                }
             }},
             {'$sort': {'attack_events': -1}},
             {'$project': {
                 '_id': 0, 'country': '$_id',
-                'total_events': 1, 'attack_events': 1,
-                'unique_ips': 1, 'attack_rate_pct': 1,
+                'attack_events': 1, 'unique_ips': 1,
             }},
         ]
         return self._agg('network_events', pipeline)
@@ -289,6 +278,73 @@ class MongoDBConnector:
             }},
         ]
         return self._agg('attack_hourly_summary', pipeline)
+
+    # =================================================================
+    # RAW-COLLECTION queries (network_events, no summary collections)
+    # Used by Backend Comparison for a fair cross-engine benchmark.
+    # =================================================================
+
+    def q1_attack_counts_raw(self) -> pd.DataFrame:
+        pipeline = [
+            {'$match': {'attack.is_attack': True}},
+            {'$group': {'_id': '$attack.category', 'total_events': {'$sum': 1}}},
+            {'$sort': {'total_events': -1}},
+            {'$project': {'_id': 0, 'attack_category': '$_id', 'total_events': 1}},
+        ]
+        return self._agg('network_events', pipeline)
+
+    def q2_hourly_trend_raw(self) -> pd.DataFrame:
+        pipeline = [
+            {'$match': {'attack.is_attack': True}},
+            {'$group': {
+                '_id': {
+                    'hour_bucket': {
+                        '$dateTrunc': {'date': '$timestamp', 'unit': 'hour'}
+                    },
+                    'attack_category': '$attack.category',
+                },
+                'event_count': {'$sum': 1},
+            }},
+            {'$sort': {'_id.hour_bucket': 1}},
+            {'$project': {
+                '_id': 0,
+                'hour_bucket': '$_id.hour_bucket',
+                'attack_category': '$_id.attack_category',
+                'event_count': 1,
+            }},
+        ]
+        return self._agg('network_events', pipeline)
+
+    def q4_attack_distribution_raw(self) -> pd.DataFrame:
+        pipeline = [
+            {'$group': {
+                '_id': '$attack.category',
+                'event_count': {'$sum': 1},
+            }},
+            {'$sort': {'event_count': -1}},
+            {'$project': {'_id': 0, 'attack_category': '$_id', 'event_count': 1}},
+        ]
+        return self._agg('network_events', pipeline)
+
+    def q12_botnet_timeline_raw(self) -> pd.DataFrame:
+        pipeline = [
+            {'$match': {'attack.category': 'Botnet'}},
+            {'$group': {
+                '_id': {
+                    '$dateTrunc': {'date': '$timestamp', 'unit': 'hour'}
+                },
+                'bot_events': {'$sum': 1},
+                'total_bytes': {
+                    '$sum': {'$add': ['$metrics.fwd_bytes', '$metrics.bwd_bytes']}
+                },
+            }},
+            {'$sort': {'_id': 1}},
+            {'$project': {
+                '_id': 0, 'hour_bucket': '$_id',
+                'bot_events': 1, 'total_bytes': 1,
+            }},
+        ]
+        return self._agg('network_events', pipeline)
 
     # -----------------------------------------------------------------
     # Utility

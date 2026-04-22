@@ -198,6 +198,151 @@ class PostgreSQLConnector:
             ORDER BY hour_bucket
         """)
 
+    # =================================================================
+    # FACT-TABLE queries (star-schema JOINs, no summary tables)
+    # Used by Backend Comparison for a fair cross-engine benchmark.
+    # =================================================================
+
+    def q1_attack_counts_fact(self) -> pd.DataFrame:
+        return self._query("""
+            SELECT da.attack_category, COUNT(*) AS total_events
+            FROM fact_network_event f
+            JOIN dim_attack da ON f.attack_key = da.attack_key
+            WHERE f.is_attack = TRUE
+            GROUP BY da.attack_category
+            ORDER BY total_events DESC
+        """)
+
+    def q2_hourly_trend_fact(self) -> pd.DataFrame:
+        return self._query("""
+            SELECT date_trunc('hour', dt.timestamp) AS hour_bucket,
+                   da.attack_category,
+                   COUNT(*) AS event_count
+            FROM fact_network_event f
+            JOIN dim_time dt    ON f.time_key   = dt.time_key
+            JOIN dim_attack da  ON f.attack_key = da.attack_key
+            WHERE f.is_attack = TRUE
+            GROUP BY hour_bucket, da.attack_category
+            ORDER BY hour_bucket
+        """)
+
+    def q3_top_sources_fact(self) -> pd.DataFrame:
+        return self._query("""
+            SELECT ds.source_ip::text, ds.country,
+                   COUNT(*) AS total_attacks
+            FROM fact_network_event f
+            JOIN dim_source ds  ON f.source_key = ds.source_key
+            WHERE f.is_attack = TRUE
+            GROUP BY ds.source_ip, ds.country
+            ORDER BY total_attacks DESC
+            LIMIT 10
+        """)
+
+    def q4_attack_distribution_fact(self) -> pd.DataFrame:
+        return self._query("""
+            SELECT da.attack_category,
+                   COUNT(*) AS event_count,
+                   ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 2) AS pct
+            FROM fact_network_event f
+            JOIN dim_attack da ON f.attack_key = da.attack_key
+            GROUP BY da.attack_category
+            ORDER BY event_count DESC
+        """)
+
+    def q5_protocol_breakdown_fact(self) -> pd.DataFrame:
+        return self._query("""
+            SELECT dp.protocol_name,
+                   COUNT(*) AS total_events,
+                   SUM(CASE WHEN f.is_attack THEN 1 ELSE 0 END) AS attack_events,
+                   ROUND(
+                       SUM(CASE WHEN f.is_attack THEN 1 ELSE 0 END)::NUMERIC
+                       * 100.0 / NULLIF(COUNT(*), 0), 2
+                   ) AS attack_pct
+            FROM fact_network_event f
+            JOIN dim_protocol dp ON f.protocol_key = dp.protocol_key
+            GROUP BY dp.protocol_name
+            ORDER BY total_events DESC
+        """)
+
+    def q6_targeted_ports_fact(self) -> pd.DataFrame:
+        return self._query("""
+            SELECT dd.dest_port, dd.service_name, COUNT(*) AS attack_count
+            FROM fact_network_event f
+            JOIN dim_destination dd ON f.dest_key = dd.dest_key
+            WHERE f.is_attack = TRUE
+            GROUP BY dd.dest_port, dd.service_name
+            ORDER BY attack_count DESC
+            LIMIT 15
+        """)
+
+    def q7_avg_duration_fact(self) -> pd.DataFrame:
+        return self._query("""
+            SELECT da.attack_label, da.attack_category,
+                   COUNT(*) AS event_count,
+                   ROUND(AVG(f.flow_duration / 1000.0), 2) AS avg_duration_ms,
+                   ROUND(AVG(f.fwd_bytes + f.bwd_bytes)::NUMERIC, 2) AS avg_total_bytes
+            FROM fact_network_event f
+            JOIN dim_attack da ON f.attack_key = da.attack_key
+            WHERE f.is_attack = TRUE
+            GROUP BY da.attack_label, da.attack_category
+            ORDER BY avg_duration_ms DESC
+        """)
+
+    def q9_country_summary_fact(self) -> pd.DataFrame:
+        return self._query("""
+            SELECT ds.country,
+                   COUNT(*) AS attack_events,
+                   COUNT(DISTINCT ds.source_ip) AS unique_ips
+            FROM fact_network_event f
+            JOIN dim_source ds ON f.source_key = ds.source_key
+            WHERE f.is_attack = TRUE
+            GROUP BY ds.country
+            ORDER BY attack_events DESC
+        """)
+
+    def q10_severity_over_time_fact(self) -> pd.DataFrame:
+        return self._query("""
+            SELECT dt.timestamp::date AS day_bucket,
+                   da.severity,
+                   COUNT(*) AS event_count
+            FROM fact_network_event f
+            JOIN dim_time dt   ON f.time_key   = dt.time_key
+            JOIN dim_attack da ON f.attack_key = da.attack_key
+            WHERE f.is_attack = TRUE
+            GROUP BY dt.timestamp::date, da.severity
+            ORDER BY dt.timestamp::date, da.severity
+        """)
+
+    def q11_weekend_weekday_fact(self) -> pd.DataFrame:
+        return self._query("""
+            SELECT dt.is_weekend,
+                   da.attack_category,
+                   COUNT(*) AS total_events,
+                   SUM(CASE WHEN f.is_attack THEN 1 ELSE 0 END) AS attack_events,
+                   ROUND(
+                       SUM(CASE WHEN f.is_attack THEN 1 ELSE 0 END)::NUMERIC
+                       * 100.0 / NULLIF(COUNT(*), 0), 2
+                   ) AS attack_rate_pct
+            FROM fact_network_event f
+            JOIN dim_time dt   ON f.time_key   = dt.time_key
+            JOIN dim_attack da ON f.attack_key = da.attack_key
+            GROUP BY dt.is_weekend, da.attack_category
+            ORDER BY dt.is_weekend, attack_events DESC
+        """)
+
+    def q12_botnet_timeline_fact(self) -> pd.DataFrame:
+        return self._query("""
+            SELECT date_trunc('hour', dt.timestamp) AS hour_bucket,
+                   COUNT(*) AS bot_events,
+                   SUM(f.fwd_bytes + f.bwd_bytes) AS total_bytes
+            FROM fact_network_event f
+            JOIN dim_time dt   ON f.time_key   = dt.time_key
+            JOIN dim_attack da ON f.attack_key = da.attack_key
+            WHERE da.attack_category = 'Botnet'
+            GROUP BY hour_bucket
+            ORDER BY hour_bucket
+        """)
+
     # -----------------------------------------------------------------
     # Time analysis helpers (from summary tables)
     # -----------------------------------------------------------------

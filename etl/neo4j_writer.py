@@ -117,7 +117,6 @@ class Neo4jWriter:
             used_protocol[(src_ip, protocol)]['cnt'] += 1
 
             # ACTIVE_IN: (label, category, severity, hour_bucket, day, month, year)
-            transport = TRANSPORT_LAYER_MAP.get(protocol, 'Unknown')
             day_of_week = ts.weekday()
             aikey = (label, category, severity, hour_bucket, day_of_week, ts.month, ts.year)
             active_in[aikey]['event_count'] += 1

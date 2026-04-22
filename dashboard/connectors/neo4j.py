@@ -51,14 +51,14 @@ class Neo4jConnector:
                 MATCH (a:AttackType)-[r:ACTIVE_IN]->(t:TimeWindow)
                 WHERE a.category <> 'Normal' AND t.hour_bucket STARTS WITH $prefix
                 RETURN t.hour_bucket AS hour_bucket, a.category AS attack_category,
-                       r.event_count AS event_count
+                       SUM(r.event_count) AS event_count
                 ORDER BY t.hour_bucket
             """, prefix=target_date)
         return self._query("""
             MATCH (a:AttackType)-[r:ACTIVE_IN]->(t:TimeWindow)
             WHERE a.category <> 'Normal'
             RETURN t.hour_bucket AS hour_bucket, a.category AS attack_category,
-                   r.event_count AS event_count
+                   SUM(r.event_count) AS event_count
             ORDER BY t.hour_bucket
         """)
 
@@ -109,15 +109,15 @@ class Neo4jConnector:
         """)
 
     # -----------------------------------------------------------------
-    # Q7: Attack event counts by type (Neo4j graph lacks per-flow duration;
-    #     returns event_count with avg_duration_ms=0 for column compatibility)
+    # Q7: Attack event counts by type
+    # Neo4j graph does not store per-flow duration or byte metrics.
     # -----------------------------------------------------------------
     def q7_avg_duration(self) -> pd.DataFrame:
         return self._query("""
             MATCH (a:AttackType)-[r:ACTIVE_IN]->(t:TimeWindow)
             WHERE a.category <> 'Normal'
             RETURN a.label AS attack_label, a.category AS attack_category,
-                   SUM(r.event_count) AS event_count, 0 AS avg_duration_ms
+                   SUM(r.event_count) AS event_count
             ORDER BY event_count DESC
         """)
 
@@ -150,15 +150,16 @@ class Neo4jConnector:
         """)
 
     # -----------------------------------------------------------------
-    # Q10: Attack severity over time
+    # Q10: Attack severity over time (grouped by day, not hour)
     # -----------------------------------------------------------------
     def q10_severity_over_time(self) -> pd.DataFrame:
         return self._query("""
             MATCH (a:AttackType)-[r:ACTIVE_IN]->(t:TimeWindow)
             WHERE a.category <> 'Normal'
-            RETURN t.hour_bucket AS hour_bucket, a.severity AS severity,
-                   r.event_count AS event_count
-            ORDER BY t.hour_bucket
+            WITH substring(t.hour_bucket, 0, 10) AS day, a.severity AS severity,
+                 r.event_count AS cnt
+            RETURN day, severity, SUM(cnt) AS event_count
+            ORDER BY day, severity
         """)
 
     # -----------------------------------------------------------------
@@ -180,7 +181,7 @@ class Neo4jConnector:
     def q12_botnet_timeline(self) -> pd.DataFrame:
         return self._query("""
             MATCH (a:AttackType {category: 'Botnet'})-[r:ACTIVE_IN]->(t:TimeWindow)
-            RETURN t.hour_bucket AS hour_bucket, r.event_count AS bot_events
+            RETURN t.hour_bucket AS hour_bucket, SUM(r.event_count) AS bot_events
             ORDER BY t.hour_bucket
         """)
 
