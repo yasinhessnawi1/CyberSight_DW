@@ -11,4 +11,4 @@ FROM summary_top_sources
 WHERE attack_count > 0
 GROUP BY source_ip, country
 ORDER BY total_attacks DESC
-LIMIT 10;
+LIMIT 10; 

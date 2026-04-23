@@ -10,6 +10,8 @@ Timestamp, 80+ flow features, Label, Attempted Category.
 import os
 import sys
 import urllib.request
+import argparse
+import subprocess
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'cicids2017')
 
@@ -24,6 +26,8 @@ FILES = {
 }
 
 EXPECTED_FINAL = list(FILES.keys())
+
+DEFAULT_VOLUME_NAME = "cybersightdw_etl_data"
 
 
 def download(url: str, dest: str, expected_size: int) -> bool:
@@ -59,7 +63,59 @@ def _progress(block_num, block_size, total_size):
         print(f"\r    {mb:.1f} MB downloaded", end='', flush=True)
 
 
+def _run(cmd: list[str]) -> None:
+    subprocess.run(cmd, check=True)
+
+
+def _docker_volume_exists(volume_name: str) -> bool:
+    try:
+        subprocess.run(
+            ["docker", "volume", "inspect", volume_name],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _ensure_docker_volume(volume_name: str) -> None:
+    if _docker_volume_exists(volume_name):
+        return
+    print(f"\nCreating Docker volume: {volume_name}")
+    _run(["docker", "volume", "create", volume_name])
+
+
+def _copy_into_volume(volume_name: str, source_dir: str) -> None:
+    abs_src = os.path.abspath(source_dir)
+    if not os.path.isdir(abs_src):
+        raise FileNotFoundError(f"Source directory not found: {abs_src}")
+
+    print(f"Copying CSV files into Docker volume '{volume_name}' ...")
+    _run([
+        "docker", "run", "--rm",
+        "-v", f"{volume_name}:/data",
+        "-v", f"{abs_src}:/src",
+        "alpine",
+        "sh", "-c", "mkdir -p /data/cicids2017 && cp /src/*.csv /data/cicids2017/",
+    ])
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Download CICIDS 2017 CSVs (Hugging Face mirror).")
+    parser.add_argument(
+        "--docker-volume",
+        action="store_true",
+        help=f"Create/populate external Docker volume (default name: {DEFAULT_VOLUME_NAME})",
+    )
+    parser.add_argument(
+        "--volume-name",
+        default=DEFAULT_VOLUME_NAME,
+        help="External Docker volume name to populate (used with --docker-volume).",
+    )
+    args = parser.parse_args()
+
     os.makedirs(DATA_DIR, exist_ok=True)
     print(f"Data directory: {DATA_DIR}")
     print(f"Source: Hugging Face (vishwa132/CICIDS-2017)\n")
@@ -90,7 +146,20 @@ def main():
             all_ok = False
 
     if all_ok:
-        print("\nAll files ready. You can now run: docker-compose up --build")
+        if args.docker_volume:
+            try:
+                _ensure_docker_volume(args.volume_name)
+                _copy_into_volume(args.volume_name, DATA_DIR)
+                print(f"\nDocker volume populated: {args.volume_name}")
+            except FileNotFoundError as e:
+                print(f"\nVolume copy failed: {e}")
+                sys.exit(1)
+            except subprocess.CalledProcessError as e:
+                print(f"\nDocker command failed: {e}")
+                print("Make sure Docker Desktop is running and the `docker` CLI is available.")
+                sys.exit(1)
+
+        print("\nAll files ready. You can now run: docker compose up --build")
     else:
         print("\nSome files are missing — check errors above.")
         sys.exit(1)
